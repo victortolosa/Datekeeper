@@ -65,14 +65,8 @@ struct EditTrackerView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
                             } else if let imageUrl = viewModel.existingCroppedImageUrl ?? viewModel.existingImageUrl,
                                       let url = URL(string: imageUrl) {
-                                AsyncImage(url: url) { phase in
-                                    if let image = phase.image {
-                                        image
-                                            .resizable()
-                                            .scaledToFill()
-                                    } else {
-                                        Color.gray
-                                    }
+                                CachedImage(url: url) {
+                                    Color.gray
                                 }
                                 .frame(width: 40, height: 30)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -199,7 +193,8 @@ class EditTrackerViewModel: ObservableObject {
         if let original = originalImage, let cropped = croppedImage {
             do {
                 // Delete old images first (fire and forget, don't block on failure)
-                await deleteOldImages()
+                // MOVED: Deletion now happens after successful update to prevent data loss
+
 
                 let basePath = "trackers/\(userId)"
                 let urls = try await storageService.uploadImagePair(
@@ -236,6 +231,12 @@ class EditTrackerViewModel: ObservableObject {
             } else {
                 try firestoreService.add(tracker)
             }
+            
+            // If we replaced images, delete the old ones now that the new ones are safe
+            if originalImage != nil && existingImageUrl != nil {
+                 await deleteOldImages()
+            }
+            
             isLoading = false
             return true
         } catch {

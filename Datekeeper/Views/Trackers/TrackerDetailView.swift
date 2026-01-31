@@ -9,7 +9,7 @@ import SwiftUI
 import Combine
 
 struct TrackerDetailView: View {
-    @State var tracker: Tracker
+    let tracker: Tracker
     @State private var timeString: String = ""
     @State private var isShowingEdit = false
 
@@ -57,6 +57,8 @@ struct TrackerDetailView: View {
         .onAppear {
             updateTime()
         }
+        .onChange(of: tracker.targetDate) { _, _ in updateTime() }
+        .onChange(of: tracker.type) { _, _ in updateTime() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Edit") {
@@ -72,21 +74,10 @@ struct TrackerDetailView: View {
     private var backgroundView: some View {
         Group {
             if let imageUrl = tracker.imageUrl, let url = URL(string: imageUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        fallbackBackground
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .overlay(Color.black.opacity(0.4))
-                    case .failure:
-                        fallbackBackground
-                    @unknown default:
-                        fallbackBackground
-                    }
+                CachedImage(url: url) {
+                    fallbackBackground
                 }
+                .overlay(Color.black.opacity(0.4))
             } else {
                 fallbackBackground
             }

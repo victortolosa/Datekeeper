@@ -178,29 +178,14 @@ struct TrackerCardView: View {
         .background {
             ZStack {
                 if let imageUrl = cardImageUrl, let url = URL(string: imageUrl) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .empty:
-                            if let config = tracker.gradientConfig {
-                                MeshGradientView(config: config)
-                            } else {
-                                Color(uiColor: .secondarySystemBackground)
-                            }
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .overlay(Color.black.opacity(0.3))
-                        case .failure:
-                            if let config = tracker.gradientConfig {
-                                MeshGradientView(config: config)
-                            } else {
-                                Color(uiColor: .secondarySystemBackground)
-                            }
-                        @unknown default:
+                    CachedImage(url: url) {
+                        if let config = tracker.gradientConfig {
+                            MeshGradientView(config: config)
+                        } else {
                             Color(uiColor: .secondarySystemBackground)
                         }
                     }
+                    .overlay(Color.black.opacity(0.3))
                 } else if let config = tracker.gradientConfig {
                     MeshGradientView(config: config)
                 } else {
