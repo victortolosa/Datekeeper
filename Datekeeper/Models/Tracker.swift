@@ -19,6 +19,7 @@ struct Tracker: Identifiable, Codable {
     var colorTheme: String
     var gradientConfig: GradientConfig?
     var imageUrl: String?
+    var croppedImageUrl: String?
     var displayUnits: [String]? // e.g. ["years", "months", "days"]
     @ServerTimestamp var createdAt: Date?
     @ServerTimestamp var updatedAt: Date?
@@ -33,6 +34,7 @@ struct Tracker: Identifiable, Codable {
         case colorTheme = "color_theme"
         case gradientConfig = "gradient_config"
         case imageUrl = "image_url"
+        case croppedImageUrl = "cropped_image_url"
         case displayUnits = "display_units"
         case createdAt = "created_at"
         case updatedAt = "updated_at"

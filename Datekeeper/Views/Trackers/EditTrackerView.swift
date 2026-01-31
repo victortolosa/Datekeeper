@@ -14,8 +14,11 @@ struct EditTrackerView: View {
     @Environment(\.dismiss) var dismiss
     @StateObject private var viewModel = EditTrackerViewModel()
     @State private var isShowingImagePicker = false
-    @State private var selectedImage: UIImage?
-    
+    @State private var isShowingCropper = false
+    @State private var originalImage: UIImage?
+    @State private var croppedImage: UIImage?
+    @State private var pendingImageForCrop: UIImage?
+
     var trackerToEdit: Tracker?
     var defaultType: String
 
@@ -54,14 +57,14 @@ struct EditTrackerView: View {
                         HStack {
                             Text("Background Image")
                             Spacer()
-                            if let image = selectedImage {
+                            if let image = croppedImage {
                                 Image(uiImage: image)
                                     .resizable()
                                     .scaledToFill()
-                                    .frame(width: 40, height: 40)
+                                    .frame(width: 40, height: 30)
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
-                            } else if let imageUrl = viewModel.existingImageUrl, let url = URL(string: imageUrl) {
-                                // Simple AsyncImage for now, could use Nuke later
+                            } else if let imageUrl = viewModel.existingCroppedImageUrl ?? viewModel.existingImageUrl,
+                                      let url = URL(string: imageUrl) {
                                 AsyncImage(url: url) { phase in
                                     if let image = phase.image {
                                         image
@@ -71,7 +74,7 @@ struct EditTrackerView: View {
                                         Color.gray
                                     }
                                 }
-                                .frame(width: 40, height: 40)
+                                .frame(width: 40, height: 30)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                             } else {
                                 Text("None")
@@ -101,7 +104,11 @@ struct EditTrackerView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         Task {
-                            if await viewModel.save(trackerId: trackerToEdit?.id, newImage: selectedImage) {
+                            if await viewModel.save(
+                                trackerId: trackerToEdit?.id,
+                                originalImage: originalImage,
+                                croppedImage: croppedImage
+                            ) {
                                 dismiss()
                             }
                         }
@@ -110,7 +117,31 @@ struct EditTrackerView: View {
                 }
             }
             .sheet(isPresented: $isShowingImagePicker) {
-                ImagePicker(selectedImage: $selectedImage)
+                ImagePicker(selectedImage: $pendingImageForCrop)
+            }
+            .fullScreenCover(isPresented: $isShowingCropper) {
+                if let imageToCrop = pendingImageForCrop {
+                    NavigationStack {
+                        ImageCropperView(
+                            image: imageToCrop,
+                            onCancel: {
+                                pendingImageForCrop = nil
+                                isShowingCropper = false
+                            },
+                            onDone: { cropped in
+                                originalImage = imageToCrop
+                                croppedImage = cropped
+                                pendingImageForCrop = nil
+                                isShowingCropper = false
+                            }
+                        )
+                    }
+                }
+            }
+            .onChange(of: pendingImageForCrop) { _, newValue in
+                if newValue != nil {
+                    isShowingCropper = true
+                }
             }
             .onAppear {
                 if let tracker = trackerToEdit {
@@ -131,12 +162,13 @@ class EditTrackerViewModel: ObservableObject {
     @Published var category = "Life"
     @Published var colorTheme = "blue"
     @Published var existingImageUrl: String?
+    @Published var existingCroppedImageUrl: String?
     @Published var isLoading = false
     @Published var errorMessage: String?
-    
+
     private let firestoreService = FirestoreService<Tracker>(collectionPath: "trackers")
     private let storageService = StorageService.shared
-    
+
     func load(tracker: Tracker) {
         self.title = tracker.title
         self.targetDate = tracker.targetDate
@@ -144,34 +176,46 @@ class EditTrackerViewModel: ObservableObject {
         self.category = tracker.category
         self.colorTheme = tracker.colorTheme
         self.existingImageUrl = tracker.imageUrl
+        self.existingCroppedImageUrl = tracker.croppedImageUrl
     }
-    
-    func save(trackerId: String?, newImage: UIImage?) async -> Bool {
+
+    func save(
+        trackerId: String?,
+        originalImage: UIImage?,
+        croppedImage: UIImage?
+    ) async -> Bool {
         guard let userId = AuthService.shared.currentUser?.uid else {
             errorMessage = "User not logged in."
             return false
         }
-        
+
         isLoading = true
         errorMessage = nil
-        
-        // 1. Upload Image if new one is selected
+
         var finalImageUrl: String? = existingImageUrl
-        
-        if let image = newImage {
+        var finalCroppedImageUrl: String? = existingCroppedImageUrl
+
+        // Upload image pair if new images are selected
+        if let original = originalImage, let cropped = croppedImage {
             do {
-                let filename = "\(UUID().uuidString).jpg"
-                let path = "trackers/\(userId)/\(filename)"
-                // Delete old image if exists? (Skipping for now for simplicity, can handle later)
-                finalImageUrl = try await storageService.uploadImage(image, path: path)
+                // Delete old images first (fire and forget, don't block on failure)
+                await deleteOldImages()
+
+                let basePath = "trackers/\(userId)"
+                let urls = try await storageService.uploadImagePair(
+                    original: original,
+                    cropped: cropped,
+                    basePath: basePath
+                )
+                finalImageUrl = urls.originalUrl
+                finalCroppedImageUrl = urls.croppedUrl
             } catch {
                 errorMessage = "Failed to upload image: \(error.localizedDescription)"
                 isLoading = false
                 return false
             }
         }
-        
-        // 2. Create/Update Tracker
+
         let tracker = Tracker(
             id: trackerId,
             userId: userId,
@@ -182,9 +226,10 @@ class EditTrackerViewModel: ObservableObject {
             colorTheme: colorTheme,
             gradientConfig: nil,
             imageUrl: finalImageUrl,
+            croppedImageUrl: finalCroppedImageUrl,
             displayUnits: ["years", "months", "days"]
         )
-        
+
         do {
             if trackerId != nil {
                 try firestoreService.update(tracker)
@@ -197,6 +242,28 @@ class EditTrackerViewModel: ObservableObject {
             errorMessage = error.localizedDescription
             isLoading = false
             return false
+        }
+    }
+
+    /// Deletes old images from storage when replacing with new ones.
+    private func deleteOldImages() async {
+        // Delete old original image
+        if let oldOriginalUrl = existingImageUrl {
+            do {
+                try await storageService.deleteByUrl(oldOriginalUrl)
+            } catch {
+                // Log but don't fail - old image cleanup is best effort
+                print("Failed to delete old original image: \(error.localizedDescription)")
+            }
+        }
+
+        // Delete old cropped image
+        if let oldCroppedUrl = existingCroppedImageUrl {
+            do {
+                try await storageService.deleteByUrl(oldCroppedUrl)
+            } catch {
+                print("Failed to delete old cropped image: \(error.localizedDescription)")
+            }
         }
     }
 }

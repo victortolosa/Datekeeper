@@ -139,17 +139,22 @@ struct TrackersListView: View {
 
 struct TrackerCardView: View {
     let tracker: Tracker
-    
-    var hasVisualBackground: Bool {
-        tracker.imageUrl != nil || tracker.gradientConfig != nil
+
+    /// Use cropped image for cards, fall back to original for backwards compatibility
+    private var cardImageUrl: String? {
+        tracker.croppedImageUrl ?? tracker.imageUrl
     }
-    
+
+    var hasVisualBackground: Bool {
+        cardImageUrl != nil || tracker.gradientConfig != nil
+    }
+
     var body: some View {
         VStack(alignment: .leading) {
-            if tracker.imageUrl != nil {
+            if cardImageUrl != nil {
                 Spacer()
             }
-            
+
             HStack {
                 VStack(alignment: .leading) {
                     Text(tracker.title)
@@ -159,9 +164,9 @@ struct TrackerCardView: View {
                         .font(.caption)
                         .foregroundColor(hasVisualBackground ? .white.opacity(0.8) : .secondary)
                 }
-                
+
                 Spacer()
-                
+
                 Text(TimeFormatterUtils.formattedString(from: tracker.type == "since" ? tracker.targetDate : Date(), to: tracker.type == "since" ? Date() : tracker.targetDate, type: tracker.type))
                     .font(.subheadline)
                     .foregroundColor(hasVisualBackground ? .white.opacity(0.9) : .secondary)
@@ -169,10 +174,10 @@ struct TrackerCardView: View {
             .padding()
         }
         .frame(maxWidth: .infinity)
-        .frame(height: tracker.imageUrl != nil ? 250 : nil)
+        .frame(height: cardImageUrl != nil ? 250 : nil)
         .background {
             ZStack {
-                if let imageUrl = tracker.imageUrl, let url = URL(string: imageUrl) {
+                if let imageUrl = cardImageUrl, let url = URL(string: imageUrl) {
                     AsyncImage(url: url) { phase in
                         switch phase {
                         case .empty:
@@ -204,7 +209,7 @@ struct TrackerCardView: View {
             }
         }
         .cornerRadius(12)
-        .clipped() // Ensure image doesn't bleed out of corners
+        .clipped()
     }
 }
 
